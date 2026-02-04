@@ -1,13 +1,5 @@
 
-# 📚 Signal Chat POC: Complete Use Case Flows (Technical Deep Dive)
-
-This document contains **detailed technical sequence diagrams** for every requested use case.
-Each diagram visualizes the interaction between:
-*   **User**
-*   **Client DB** (Local SQLCipher)
-*   **Client E2EE** (Signal Protocol Engine)
-*   **Server** (Backend API)
-*   **Server Storage** (Cloud DB)
+#Complete Use Case Flows (Technical Deep Dive)
 
 ---
 
