@@ -269,8 +269,8 @@ sequenceDiagram
 
 ## 🛡️ 4. Administration & Moderation
 
-### 4.1 User Reports User B
-**Simple explanation:** If a user is bothersome, you can report them. Your app sends a report to the admins. You can also choose to attach a few recent messages so the admins can see what happened.
+### 4.1 User Reports User B (Review & Action)
+**Simple explanation:** If a user is bothersome, you can report them. Your app sends a report to the system. An administrator then reviews the report and the attached evidence. If the user is found to be breaking rules, the admin takes action (like a warning or a ban) and you are notified.
 
 ```mermaid
 sequenceDiagram
@@ -278,12 +278,23 @@ sequenceDiagram
     participant App as 📱 Client App
     participant Server as ☁️ Server
     participant AS as 🗄️ Admin Storage
+    participant Admin as 👩‍💻 Administrator
+    participant SS as 🗄️ Server Storage
 
     User->>App: 1. Report User B (Spam)
     App->>App: 2. Attach Last 5 Messages (Optional)
     App->>Server: 3. POST /reports {target: B, reason: Spam}
     Server->>AS: 4. Create Ticket
-    Note over AS: Admins review ticket.
+    
+    Note over Admin, AS: Review Process
+    Admin->>Server: 5. Fetch Pending Reports
+    Server->>AS: 6. Get Tickets
+    AS-->>Admin: 7. Review Evidence
+    
+    Admin->>Server: 8. Take Action (Ban/Warn)
+    Server->>SS: 9. Update Target User Status
+    Server->>AS: 10. Close Ticket
+    Server-->>User: 11. Feedback: "Action Taken"
 ```
 
 ### 4.2 Administrator Bans User
