@@ -1,12 +1,12 @@
+#  Signal Chat POC: Complete Use Case Flows (Technical Deep Dive)
 
-# Complete Use Case Flows (Technical Deep Dive)
 
 ---
 
 ## 🏗️ 1. User Management
 
 ### 1.1 User Gets Registered
-**Simple explanation:** When a user first installs the app, the app creates secret security keys on their phone. These keys are used to lock and unlock messages. The "public" part of these keys is sent to the server so friends can find and start a safe chat with the user.
+**Simple explanation:** When a user first installs the app, they register with their phone number and receive an OTP for verification. Once verified, the app creates secret security keys on their phone. These keys are used to lock and unlock messages. The "public" part of these keys is sent to the server so friends can find and start a safe chat with the user.
 
 ```mermaid
 sequenceDiagram
@@ -16,17 +16,22 @@ sequenceDiagram
     participant Server as ☁️ Server API
     participant SS as 🗄️ Server Storage
 
-    User->>CDB: 1. Input Phone & Basic Info
-    CDB->>E2EE: 2. Generate Identity Key Pair
-    CDB->>E2EE: 3. Generate Registration ID
-    CDB->>E2EE: 4. Generate PreKeys (0-100) & Initial SignedPreKey
+    User->>Server: 1. Input Phone Number
+    Server->>User: 2. Send SMS OTP
+    User->>Server: 3. Verify OTP
+    Server-->>User: 4. Verification Success (JWT/Token)
+
+    Note over User, CDB: Proceed to Key Generation
+    CDB->>E2EE: 5. Generate Identity Key Pair
+    CDB->>E2EE: 6. Generate Registration ID
+    CDB->>E2EE: 7. Generate PreKeys (0-100) & Initial SignedPreKey
     
-    E2EE->>CDB: 5. Store Private Keys (Encrypted)
+    E2EE->>CDB: 8. Store Private Keys (Encrypted)
     
-    CDB->>Server: 6. Upload Public Key Bundle
-    Server->>SS: 7. Store Bundle inside /keys/{userId}
+    CDB->>Server: 9. Upload Public Key Bundle
+    Server->>SS: 10. Store Bundle inside /keys/{userId}
     SS-->>Server: Success
-    Server-->>User: 8. Registration Complete (200 OK)
+    Server-->>User: 11. Registration Complete (200 OK)
 ```
 
 ### 1.2 User Updates Account Info
