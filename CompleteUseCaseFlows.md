@@ -22,9 +22,9 @@ sequenceDiagram
     Server-->>User: 4. Verification Success (JWT/Token)
 
     Note over User, CDB: Proceed to Key Generation
-    CDB->>E2EE: 5. Generate Identity Key Pair
-    CDB->>E2EE: 6. Generate Registration ID
-    CDB->>E2EE: 7. Generate PreKeys (0-100) & Initial SignedPreKey
+    User->>E2EE: 5. Generate Identity Key Pair
+    User->>E2EE: 6. Generate Registration ID
+    User->>E2EE: 7. Generate PreKeys (0-100) & Initial SignedPreKey
     
     E2EE->>CDB: 8. Store Private Keys (Encrypted)
     
@@ -100,9 +100,9 @@ sequenceDiagram
     CA_DB->>Server: 3. Get PreKey Bundle (B)
     Server->>SS: 4. Fetch Bundle
     SS-->>Server: Return Bundle
-    Server-->>CA_E2E: 5. Receive {IK_B, SPK_B, OPK_B}
+    Server-->>CA_DB: 5. Receive {IK_B, SPK_B, OPK_B}
     
-    CA_E2E->>CA_E2E: 6. X3DH Handshake (Derive Root Key)
+    CA_DB->>CA_E2E: 6. Handover Bundle for X3DH
     CA_E2E->>CA_DB: 7. Save New Session
     CA_E2E->>CA_E2E: 8. Encrypt "Hi B" (PreKeyMessage)
     
@@ -127,7 +127,7 @@ sequenceDiagram
     CA_E2E->>CA_E2E: 3. Ratchet Forward -> New Message Key
     CA_E2E->>CA_E2E: 4. Encrypt (SignalMessage)
     CA_E2E->>Server: 5. Send Message
-    CA_DB->>CA_DB: 6. Update Session State (Ratchet moved)
+    CA_E2E->>CA_DB: 6. Update Session State (Ratchet moved)
 ```
 
 ### 2.3 Online vs Offline Client Handling (The Inbox)
@@ -145,18 +145,26 @@ sequenceDiagram
     
     alt B is Online
         Server->>CB_Net: 2. Stream Event
-        CB_Net->>SS: 3. Fetch Message Payload
-        CB_Net->>CB_DB: 4. Process & Decrypt
-        CB_Net->>SS: 5. Ack (Delete Verified)
+        CB_Net->>Server: 3. Request Message Payload
+        Server->>SS: 4. Fetch from Inbox
+        SS-->>Server: Payload
+        Server-->>CB_Net: 5. Deliver Message
+        CB_Net->>CB_DB: 6. Process & Decrypt
+        CB_Net->>Server: 7. Ack (Delete Verified)
+        Server->>SS: 8. Delete Message
         SS-->>Server: Message Removed
     else B is Offline
         Note over SS: Message stays in Storage
         Note over CB_Net: ...Time Passes...
-        CB_Net->>Server: 6. User B Comes Online (Connect)
-        Server->>CB_Net: 7. "You have 5 pending messages"
-        CB_Net->>SS: 8. Fetch Batch
-        CB_Net->>CB_DB: 9. Decrypt All
-        CB_Net->>SS: 10. Delete All from Server
+        CB_Net->>Server: 9. User B Comes Online (Connect)
+        Server->>CB_Net: 10. "You have 5 pending messages"
+        CB_Net->>Server: 11. Fetch Batch
+        Server->>SS: 12. Retrieve All
+        SS-->>Server: List of 5 Msgs
+        Server-->>CB_Net: 13. Send Batch
+        CB_Net->>CB_DB: 14. Decrypt All
+        CB_Net->>Server: 15. Delete All from Server
+        Server->>SS: 16. Cleanup Storage
     end
 ```
 
@@ -175,8 +183,8 @@ sequenceDiagram
     Note over UA: Deletion is local only.
 ```
 
-### 2.5 User B Denies Chat Deletion
-**Simple explanation:** If you try to delete a message for everyone, the other person's app receives a request. If they choose to deny it, the message stays on their phone.
+### 2.5 User A Requests 'Delete for Everyone' (Revoke)
+**Simple explanation:** If you try to delete a message for everyone, your app sends a "Revoke" request to the other person. If their app is configured to allow it, the message is removed. If they choose to deny it (or have an app version that prevents it), the message stays on their phone.
 
 ```mermaid
 sequenceDiagram
@@ -210,14 +218,16 @@ sequenceDiagram
     CDB->>Server: 2. POST /groups/create {members: [A,B,C]}
     Server->>SS: 3. Create Group Document
     SS-->>Server: Return GroupID
+    Server-->>User: 4. Group Created (ID: 123)
     
     Note over E2EE: Sender Key Setup
-    E2EE->>E2EE: 4. Generate 'SenderKey' Chain
-    E2EE->>E2EE: 5. Encrypt SenderKey for Bob (1-to-1)
-    E2EE->>E2EE: 6. Encrypt SenderKey for Charlie (1-to-1)
+    User->>E2EE: 5. Initialize Group Crypto
+    E2EE->>E2EE: 6. Generate 'SenderKey' Chain
+    E2EE->>E2EE: 7. Encrypt SenderKey for Bob (1-to-1)
+    E2EE->>E2EE: 8. Encrypt SenderKey for Charlie (1-to-1)
     
-    E2EE->>Server: 7. Send 'Distribution Messages'
-    Server->>SS: 8. Route to B and C Inboxes
+    E2EE->>Server: 9. Send 'Distribution Messages'
+    Server->>SS: 10. Route to B and C Inboxes
 ```
 
 ### 3.2 User Sends Message to Group
