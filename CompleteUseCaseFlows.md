@@ -94,12 +94,18 @@ sequenceDiagram
     CDB->>CDB: 3. Hash Numbers (SHA256)
     
     CDB->>Server: 4. Send List of Hashes
-    Server->>SS: 5. Query matching User Hashes
-    SS-->>Server: Return Matches (UserIDs)
     
-    Server-->>CDB: 6. Return Registered User List
-    CDB->>CDB: 7. Save to 'Contacts' Table
-    CDB-->>User: 8. Show Available Friends
+    alt Network Error / Server Fail
+        Server--xCDB: Request Failed
+        CDB-->>User: Show "Sync Failed, Pull to Retry"
+    else Success
+        Server->>SS: 5. Query matching User Hashes
+        SS-->>Server: Return Matches (UserIDs)
+        
+        Server-->>CDB: 6. Return Registered User List
+        CDB->>CDB: 7. Save to 'Contacts' Table
+        CDB-->>User: 8. Show Available Friends
+    end
 ```
 
 ---
@@ -291,10 +297,17 @@ sequenceDiagram
     E2EE->>E2EE: 3. Encrypt ONCE -> Ciphertext
     
     E2EE->>Server: 4. Send {GroupId, Ciphertext}
-    Server->>Group: 5. Fan-out to Bob & Charlie
     
-    Note over Group: Bob uses A's Sender Key to decrypt.
-    Note over Group: Charlie uses A's Sender Key to decrypt.
+    alt Network Failure
+        Server--xE2EE: (No Ack)
+        E2EE->>E2EE: Queue for Retry (Backoff)
+    else Success
+        Server-->>E2EE: 200 OK
+        Server->>Group: 5. Fan-out to Bob & Charlie
+        
+        Note over Group: Bob uses A's Sender Key to decrypt.
+        Note over Group: Charlie uses A's Sender Key to decrypt.
+    end
 ```
 
 ### 3.3 User Leaves Group
@@ -306,9 +319,18 @@ sequenceDiagram
     participant Server as ☁️ Server
     participant SS as 🗄️ Server Storage
 
-    User->>Server: 1. Leave Group {GroupId}
-    Server->>SS: 2. Remove UserID from 'members' array
-    Server->>Server: 3. System Msg: "Alice left" -> Group Inbox
+    User->>CDB: 1. Click "Leave Group"
+    CDB->>Server: 2. POST /groups/{id}/leave
+    
+    alt Server Error
+        Server-->>CDB: 500 Error
+        CDB-->>User: Show "Could not leave group"
+    else Success
+        Server->>SS: 3. Remove UserID from 'members' array
+        Server->>Server: 4. System Msg: "Alice left" -> Group Inbox
+        Server-->>CDB: 5. 200 OK
+        CDB->>CDB: 6. Local Delete / Mark Left
+    end
 ```
 
 ---
@@ -328,8 +350,16 @@ sequenceDiagram
     User->>App: 1. Report User B (Spam)
     App->>App: 2. Attach Last 5 Messages (Optional)
     App->>Server: 3. POST /reports {target: B, reason: Spam}
-    Server->>AS: 4. Create Ticket
-    Note over AS: Admins review ticket.
+    
+    alt Submission Failed
+        Server-->>App: Error
+        App-->>User: Show "Report Failed"
+    else Success
+        Server->>AS: 4. Create Ticket
+        Note over AS: Admins review ticket.
+        Server-->>App: 200 OK
+        App-->>User: Show "Report Submitted"
+    end
 ```
 
 ### 4.2 Administrator Bans User
@@ -343,8 +373,14 @@ sequenceDiagram
     participant Target as 📱 Banned User
 
     Admin->>Server: 1. Ban User B
-    Server->>SS: 2. Set user status = 'BANNED'
-    Server->>SS: 3. Revoke Auth Tokens
+    
+    alt DB Error
+        Server-->>Admin: Show "Ban Failed"
+    else Success
+        Server->>SS: 2. Set user status = 'BANNED'
+        Server->>SS: 3. Revoke Auth Tokens
+        Server-->>Admin: Show "User B Banned"
+    end
     
     Target->>Server: 4. Try Connect / Send
     Server-->>Target: 5. 403 Forbidden (Banned)
@@ -403,6 +439,13 @@ sequenceDiagram
     Note over E2EE: OR encrypted inside signal envelope (secure).
     
     E2EE->>Server: 5. Send Message
+    
+    alt Network Fail
+        Server--xE2EE: No Ack
+        App->>App: Queue for Retry
+    else Success
+        Server-->>E2EE: 200 OK
+    end
 ```
 
 ### 5.2 User Queries All Users with Specific Tag
@@ -435,6 +478,13 @@ sequenceDiagram
     
     Note over CDB: Optionally sync to self-devices
     CDB->>Server: 4. Send Sync Message (to Self)
+
+    alt Sync Fail
+        Server--xCDB: No Network
+        CDB->>CDB: Mark Note "Unsynced"
+    else Success
+        Server-->>CDB: 200 OK (Synced)
+    end
 ```
 
 ---
