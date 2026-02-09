@@ -1,12 +1,19 @@
-#  Complete Use Case Flows (Technical Deep Dive)
+# 📚 Signal Chat POC: Complete Use Case Flows (Technical Deep Dive)
 
+This document contains **detailed technical sequence diagrams** for every requested use case.
+Each diagram visualizes the interaction between:
+*   **User**
+*   **Client DB** (Local SQLCipher)
+*   **Client E2EE** (Signal Protocol Engine)
+*   **Server** (Backend API)
+*   **Server Storage** (Cloud DB)
 
 ---
 
 ## 🏗️ 1. User Management
 
 ### 1.1 User Gets Registered
-**Simple explanation:** When a user first installs the app, they register with their phone number and receive an OTP for verification. Once verified, the app creates secret security keys on their phone. These keys are used to lock and unlock messages. The "public" part of these keys is sent to the server so friends can find and start a safe chat with the user.
+**Simple explanation:** When a user first installs the app, the app creates secret security keys on their phone. These keys are used to lock and unlock messages. The "public" part of these keys is sent to the server so friends can find and start a safe chat with the user.
 
 ```mermaid
 sequenceDiagram
@@ -16,22 +23,30 @@ sequenceDiagram
     participant Server as ☁️ Server API
     participant SS as 🗄️ Server Storage
 
-    User->>Server: 1. Input Phone Number
-    Server->>User: 2. Send SMS OTP
-    User->>Server: 3. Verify OTP
-    Server-->>User: 4. Verification Success (JWT/Token)
-
-    Note over User, CDB: Proceed to Key Generation
-    User->>E2EE: 5. Generate Identity Key Pair
-    User->>E2EE: 6. Generate Registration ID
-    User->>E2EE: 7. Generate PreKeys (0-100) & Initial SignedPreKey
+    User->>CDB: 1. Input Phone Number
+    CDB->>Server: 2. Request OTP (POST /auth/otp)
+    Server-->>CDB: 3. OTP Sent (200 OK)
     
-    E2EE->>CDB: 8. Store Private Keys (Encrypted)
+    User->>CDB: 4. Input OTP "123456"
+    CDB->>Server: 5. Verify OTP (POST /auth/verify)
     
-    CDB->>Server: 9. Upload Public Key Bundle
-    Server->>SS: 10. Store Bundle inside /keys/{userId}
-    SS-->>Server: Success
-    Server-->>User: 11. Registration Complete (200 OK)
+    alt OTP Invalid
+        Server-->>CDB: 400 Bad Request (Invalid OTP)
+        CDB-->>User: Show Error "Wrong Code"
+    else OTP Valid
+        Server-->>CDB: 200 OK (Auth Token)
+        
+        CDB->>E2EE: 6. Generate Identity Key Pair
+        CDB->>E2EE: 7. Generate Registration ID
+        CDB->>E2EE: 8. Generate PreKeys (0-100) & Initial SignedPreKey
+        
+        E2EE->>CDB: 9. Store Private Keys (Encrypted)
+        
+        CDB->>Server: 10. Upload Public Key Bundle
+        Server->>SS: 11. Store Bundle inside /keys/{userId}
+        SS-->>Server: Success
+        Server-->>User: 12. Registration Complete (200 OK)
+    end
 ```
 
 ### 1.2 User Updates Account Info
@@ -45,11 +60,22 @@ sequenceDiagram
     participant SS as 🗄️ Server Storage
 
     User->>CDB: 1. Change Name to "Alice Pro"
-    CDB->>CDB: 2. Update Local User Table
-    CDB->>Server: 3. POST /profile {name: "Alice Pro"}
-    Server->>SS: 4. Update /users/{id} Document
-    SS-->>Server: Ack
-    Server-->>User: 5. Profile Updated
+    CDB-->>User: Show Loading Spinner
+    
+    CDB->>Server: 2. POST /profile {name: "Alice Pro"}
+    
+    alt Server Request Fails (e.g. 500 or Network Error)
+        Server-->>CDB: Error (or Timeout)
+        CDB-->>User: Show "Update Failed, Try Again"
+        Note over CDB: Local DB is NOT updated.
+    else Server Request Success
+        Server->>SS: 3. Update /users/{id} Document
+        SS-->>Server: Ack
+        Server-->>CDB: 4. 200 OK (Updated Profile)
+        
+        CDB->>CDB: 5. Update Local User Table
+        CDB-->>User: 6. Show "Profile Updated"
+    end
 ```
 
 ### 1.3 User Looks for Friends Among Contacts
@@ -98,18 +124,24 @@ sequenceDiagram
     CA_DB->>CA_DB: 2. Check Session? (No)
     
     CA_DB->>Server: 3. Get PreKey Bundle (B)
-    Server->>SS: 4. Fetch Bundle
-    SS-->>Server: Return Bundle
-    Server-->>CA_DB: 5. Receive {IK_B, SPK_B, OPK_B}
-    
-    CA_DB->>CA_E2E: 6. Handover Bundle for X3DH
-    CA_E2E->>CA_DB: 7. Save New Session
-    CA_E2E->>CA_E2E: 8. Encrypt "Hi B" (PreKeyMessage)
-    
-    CA_E2E->>Server: 9. Send Message
-    Server->>SS: 10. Store in B's Inbox
-    
-    Note over Server, UB: Delivery depends on Online Status (See 2.3)
+
+    alt Network Error / Server Unreachable
+        Server-->>CA_DB: Connection Failed
+        CA_DB-->>UA: Show "Waiting for network..." (Queued)
+    else Success
+        Server->>SS: 4. Fetch Bundle
+        SS-->>Server: Return Bundle
+        Server-->>CA_E2E: 5. Receive {IK_B, SPK_B, OPK_B}
+        
+        CA_E2E->>CA_E2E: 6. X3DH Handshake (Derive Root Key)
+        CA_E2E->>CA_DB: 7. Save New Session
+        CA_E2E->>CA_E2E: 8. Encrypt "Hi B" (PreKeyMessage)
+        
+        CA_E2E->>Server: 9. Send Message
+        Server->>SS: 10. Store in B's Inbox
+        
+        Note over Server, UB: Delivery depends on Online Status (See 2.3)
+    end
 ```
 
 ### 2.2 User A Sends Message to Known User B (Ongoing)
@@ -126,8 +158,18 @@ sequenceDiagram
     CA_DB->>CA_E2E: 2. Load Session (B)
     CA_E2E->>CA_E2E: 3. Ratchet Forward -> New Message Key
     CA_E2E->>CA_E2E: 4. Encrypt (SignalMessage)
+    
     CA_E2E->>Server: 5. Send Message
-    CA_E2E->>CA_DB: 6. Update Session State (Ratchet moved)
+    
+    alt Network Failed
+        Server--xCA_E2E: (No Response)
+        CA_DB->>CA_DB: 6. Mark Message "Pending/Retry"
+        Note over CA_DB: Background job retries later
+    else Success
+        Server-->>CA_E2E: 200 OK
+        CA_DB->>CA_DB: 6. Mark Status "Sent"
+        CA_DB->>CA_DB: 7. Update Session State (Ratchet moved)
+    end
 ```
 
 ### 2.3 Online vs Offline Client Handling (The Inbox)
@@ -145,26 +187,18 @@ sequenceDiagram
     
     alt B is Online
         Server->>CB_Net: 2. Stream Event
-        CB_Net->>Server: 3. Request Message Payload
-        Server->>SS: 4. Fetch from Inbox
-        SS-->>Server: Payload
-        Server-->>CB_Net: 5. Deliver Message
-        CB_Net->>CB_DB: 6. Process & Decrypt
-        CB_Net->>Server: 7. Ack (Delete Verified)
-        Server->>SS: 8. Delete Message
+        CB_Net->>SS: 3. Fetch Message Payload
+        CB_Net->>CB_DB: 4. Process & Decrypt
+        CB_Net->>SS: 5. Ack (Delete Verified)
         SS-->>Server: Message Removed
     else B is Offline
         Note over SS: Message stays in Storage
         Note over CB_Net: ...Time Passes...
-        CB_Net->>Server: 9. User B Comes Online (Connect)
-        Server->>CB_Net: 10. "You have 5 pending messages"
-        CB_Net->>Server: 11. Fetch Batch
-        Server->>SS: 12. Retrieve All
-        SS-->>Server: List of 5 Msgs
-        Server-->>CB_Net: 13. Send Batch
-        CB_Net->>CB_DB: 14. Decrypt All
-        CB_Net->>Server: 15. Delete All from Server
-        Server->>SS: 16. Cleanup Storage
+        CB_Net->>Server: 6. User B Comes Online (Connect)
+        Server->>CB_Net: 7. "You have 5 pending messages"
+        CB_Net->>SS: 8. Fetch Batch
+        CB_Net->>CB_DB: 9. Decrypt All
+        CB_Net->>SS: 10. Delete All from Server
     end
 ```
 
@@ -183,20 +217,27 @@ sequenceDiagram
     Note over UA: Deletion is local only.
 ```
 
-### 2.5 User A Requests 'Delete for Everyone' (Revoke)
-**Simple explanation:** If you try to delete a message for everyone, your app sends a "Revoke" request to the other person. If their app is configured to allow it, the message is removed. If they choose to deny it (or have an app version that prevents it), the message stays on their phone.
+### 2.5 User A Requests "Delete for Everyone" (User B Denies)
+**Simple explanation:** If you try to delete a message for everyone, the other person's app receives a request. If they choose to deny it, the message stays on their phone. If they are offline, the request waits in their inbox.
 
 ```mermaid
 sequenceDiagram
     participant UA as User A
     participant Server as Server
+    participant SS as 🗄️ Server Storage
     participant UB as User B
     
     UA->>Server: 1. Send "DeleteRequest" for MsgID: 123
-    Server->>UB: 2. Deliver "DeleteRequest"
-    UB->>UB: 3. "User A wants to delete msg 123. Allow?"
-    UB->>Server: 4. "No" (Deny)
-    Note over UB: Message remains on B's device.
+    
+    alt User B is Offline
+        Server->>SS: Store "DeleteRequest" in B's Inbox
+        Note over Server: Delivered when B connects
+    else User B is Online
+        Server->>UB: 2. Deliver "DeleteRequest"
+        UB->>UB: 3. "User A wants to delete msg 123. Allow?"
+        UB->>Server: 4. "No" (Deny)
+        Note over UB: Message remains on B's device.
+    end
 ```
 
 ---
@@ -216,18 +257,23 @@ sequenceDiagram
 
     User->>CDB: 1. Create Group "Team" (Add Bob, Charlie)
     CDB->>Server: 2. POST /groups/create {members: [A,B,C]}
-    Server->>SS: 3. Create Group Document
-    SS-->>Server: Return GroupID
-    Server-->>User: 4. Group Created (ID: 123)
     
-    Note over E2EE: Sender Key Setup
-    User->>E2EE: 5. Initialize Group Crypto
-    E2EE->>E2EE: 6. Generate 'SenderKey' Chain
-    E2EE->>E2EE: 7. Encrypt SenderKey for Bob (1-to-1)
-    E2EE->>E2EE: 8. Encrypt SenderKey for Charlie (1-to-1)
-    
-    E2EE->>Server: 9. Send 'Distribution Messages'
-    Server->>SS: 10. Route to B and C Inboxes
+    alt Validation Failed (e.g. Invalid Members)
+        Server-->>CDB: 400 Bad Request
+        CDB-->>User: Show "Group Creation Failed"
+    else Success
+        Server->>SS: 3. Create Group Document
+        SS-->>Server: Return GroupID
+        Server-->>CDB: 200 OK (GroupId)
+        
+        Note over E2EE: Sender Key Setup
+        E2EE->>E2EE: 4. Generate 'SenderKey' Chain
+        E2EE->>E2EE: 5. Encrypt SenderKey for Bob (1-to-1)
+        E2EE->>E2EE: 6. Encrypt SenderKey for Charlie (1-to-1)
+        
+        E2EE->>Server: 7. Send 'Distribution Messages'
+        Server->>SS: 8. Route to B and C Inboxes
+    end
 ```
 
 ### 3.2 User Sends Message to Group
@@ -269,8 +315,8 @@ sequenceDiagram
 
 ## 🛡️ 4. Administration & Moderation
 
-### 4.1 User Reports User B (Review & Action)
-**Simple explanation:** If a user is bothersome, you can report them. Your app sends a report to the system. An administrator then reviews the report and the attached evidence. If the user is found to be breaking rules, the admin takes action (like a warning or a ban) and you are notified.
+### 4.1 User Reports User B
+**Simple explanation:** If a user is bothersome, you can report them. Your app sends a report to the admins. You can also choose to attach a few recent messages so the admins can see what happened.
 
 ```mermaid
 sequenceDiagram
@@ -278,23 +324,12 @@ sequenceDiagram
     participant App as 📱 Client App
     participant Server as ☁️ Server
     participant AS as 🗄️ Admin Storage
-    participant Admin as 👩‍💻 Administrator
-    participant SS as 🗄️ Server Storage
 
     User->>App: 1. Report User B (Spam)
     App->>App: 2. Attach Last 5 Messages (Optional)
     App->>Server: 3. POST /reports {target: B, reason: Spam}
     Server->>AS: 4. Create Ticket
-    
-    Note over Admin, AS: Review Process
-    Admin->>Server: 5. Fetch Pending Reports
-    Server->>AS: 6. Get Tickets
-    AS-->>Admin: 7. Review Evidence
-    
-    Admin->>Server: 8. Take Action (Ban/Warn)
-    Server->>SS: 9. Update Target User Status
-    Server->>AS: 10. Close Ticket
-    Server-->>User: 11. Feedback: "Action Taken"
+    Note over AS: Admins review ticket.
 ```
 
 ### 4.2 Administrator Bans User
